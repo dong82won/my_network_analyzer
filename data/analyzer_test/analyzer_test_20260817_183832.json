@@ -1,0 +1,154 @@
+{
+    "name": "analyzer_test",
+    "created_at": "2026-08-17 18:15:37",
+    "floorplan": {
+        "image_path": "analyzer_test.jpg",
+        "width_px": 1280,
+        "height_px": 904,
+        "meters_per_pixel": 0.05602444825801779
+    },
+    "ap_markers": [
+        {
+            "bssid": "EC:B9:31:39:EB:F3",
+            "ssid": "동원's Home_5G",
+            "x_m": 32.0,
+            "y_m": 15.0,
+            "channel_freq": "5240 MHz",
+            "channel_num": 48,
+            "wifi_band": "5GHz",
+            "security": "WPA2",
+            "max_rate": "270 Mbit/s",
+            "sequence_id": 1
+        },
+        {
+            "bssid": "EC:B9:31:39:EB:F3",
+            "ssid": "동원's Home_5G",
+            "x_m": 41.0,
+            "y_m": 15.0,
+            "channel_freq": "5240 MHz",
+            "channel_num": 48,
+            "wifi_band": "5GHz",
+            "security": "WPA2",
+            "max_rate": "270 Mbit/s",
+            "sequence_id": 2
+        }
+    ],
+    "survey_points": [
+        {
+            "x_m": 45.0,
+            "y_m": 19.0,
+            "timestamp": 1786959498.8565135,
+            "metrics": {
+                "timestamp": 1786959498.1785786,
+                "interface": "wlp13s0",
+                "ssid": "동원's Home_5G",
+                "bssid": "EC:B9:31:39:EB:F3",
+                "ip_addr": "192.168.0.11",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5240 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -67,
+                "latency_ms": 4.2,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.2,
+                "score": 87,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 1,
+            "scanned_aps": {
+                "EC:B9:31:39:EB:F3": -67
+            }
+        },
+        {
+            "x_m": 45.0,
+            "y_m": 11.0,
+            "timestamp": 1786959503.1558552,
+            "metrics": {
+                "timestamp": 1786959502.1763444,
+                "interface": "wlp13s0",
+                "ssid": "동원's Home_5G",
+                "bssid": "EC:B9:31:39:EB:F3",
+                "ip_addr": "192.168.0.11",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5240 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -65,
+                "latency_ms": 4.2,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.3,
+                "score": 88,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 2,
+            "scanned_aps": {
+                "EC:B9:31:39:EB:F3": -65
+            }
+        },
+        {
+            "x_m": 37.0,
+            "y_m": 11.0,
+            "timestamp": 1786959507.5559626,
+            "metrics": {
+                "timestamp": 1786959506.174925,
+                "interface": "wlp13s0",
+                "ssid": "동원's Home_5G",
+                "bssid": "EC:B9:31:39:EB:F3",
+                "ip_addr": "192.168.0.11",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5240 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -65,
+                "latency_ms": 3.5,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 1.3,
+                "score": 89,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 3,
+            "scanned_aps": {
+                "EC:B9:31:39:EB:F3": -64
+            }
+        },
+        {
+            "x_m": 37.0,
+            "y_m": 19.0,
+            "timestamp": 1786959511.6556194,
+            "metrics": {
+                "timestamp": 1786959511.1740193,
+                "interface": "wlp13s0",
+                "ssid": "동원's Home_5G",
+                "bssid": "EC:B9:31:39:EB:F3",
+                "ip_addr": "192.168.0.11",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5240 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -64,
+                "latency_ms": 3.8,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.5,
+                "score": 90,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 4,
+            "scanned_aps": {
+                "EC:B9:31:39:EB:F3": -64
+            }
+        }
+    ]
+}

@@ -1,0 +1,12 @@
+{
+    "name": "analyzer_test",
+    "created_at": "2026-08-17 18:15:37",
+    "floorplan": {
+        "image_path": "analyzer_test.jpg",
+        "width_px": 1280,
+        "height_px": 904,
+        "meters_per_pixel": 0.05
+    },
+    "ap_markers": [],
+    "survey_points": []
+}
