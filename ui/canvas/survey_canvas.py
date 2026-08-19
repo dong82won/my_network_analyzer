@@ -1,208 +1,23 @@
-#!/ural/bin/env python3
+#!/usr/bin/env python3
 '''
-마커 드래그 이동 시 붉은 점선 가이드선(Crosshair) 실시간 동기화,
-Snap-to-Grid, 점선 테두리 억제 및 typing.Any 지원이 적용된 SurveyCanvas 모듈입니다.
+QGraphicsView 뷰포트 조작, 히트맵 렌더링, Legend 오버레이 및 레이어 이벤트를 총괄하는 SurveyCanvas 모듈입니다.
 '''
 
 import math
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, QRectF, QPoint, QPointF
-from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QFont, QPainter
+from PySide6.QtCore import Qt, Signal, QRectF, QPoint
+from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsItem, QGraphicsLineItem, QGraphicsEllipseItem,
-    QGraphicsSimpleTextItem, QGraphicsItemGroup, QGraphicsRectItem,
-    QStyle
+    QGraphicsItem, QGraphicsLineItem, QGraphicsSimpleTextItem,
+    QGraphicsItemGroup, QGraphicsRectItem
 )
 
-
-KEY_ITEM_TYPE = 0
-KEY_DATA_OBJ = 1
-
-TYPE_SCALE = "SCALE"
-TYPE_AP = "AP"
-TYPE_SAMPLE = "SAMPLE"
-
-
-class MeasureMarkerItem(QGraphicsItem):
-    '''Wi-Fi 신호 아이콘 형태의 커스텀 그래픽 마커 아이템'''
-    def __init__(self, x_px: float, y_px: float, rssi: int, seq_id: int, point_obj: object = None):
-        super().__init__()
-        self.setPos(x_px, y_px)
-        self.setZValue(30)
-        self.seq_id = seq_id
-        self.rssi = rssi
-
-        self.primary_color = QColor("#00E5FF")
-        self.current_color = QColor("#00E5FF")
-
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-
-        self.label_bg = QGraphicsRectItem(self)
-        self.label_bg.setBrush(QBrush(QColor(0, 0, 0, 180)))
-        self.label_bg.setPen(Qt.PenStyle.NoPen)
-        self.label_bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-
-        self.label_txt = QGraphicsSimpleTextItem(f"#{seq_id}", self.label_bg)
-        self.label_txt.setFont(QFont("Sans", 8, QFont.Weight.Bold))
-        self.label_txt.setBrush(QBrush(self.primary_color))
-        self.label_txt.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-
-        t_rect = self.label_txt.boundingRect()
-        padding = 4
-        self.label_bg.setRect(0, 0, t_rect.width() + padding * 2, t_rect.height() + padding * 2)
-        self.label_txt.setPos(padding, padding)
-        self.label_bg.setPos(12, 4)
-
-        self.setData(KEY_ITEM_TYPE, TYPE_SAMPLE)
-        self.setData(KEY_DATA_OBJ, point_obj)
-
-        self.full_tooltip = f"Measure Point #{seq_id}\nSignal: {rssi} dBm\nPos: ({x_px:.1f}px, {y_px:.1f}px)"
-        self.setToolTip("")
-        self.setAcceptHoverEvents(False)
-
-    def set_color(self, color: QColor):
-        self.current_color = color
-        self.label_txt.setBrush(QBrush(color))
-        self.update()
-
-    def boundingRect(self) -> QRectF:
-        return QRectF(-16, -16, 32, 32)
-
-    def paint(self, painter: QPainter, option: Any, widget: Any = None):
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        pen = QPen(self.current_color, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-
-        # 1. 중앙 원점
-        painter.setBrush(QBrush(self.current_color))
-        painter.drawEllipse(QRectF(-2.5, 3.5, 5, 5))
-
-        start_angle = 45 * 16
-        span_angle = 90 * 16
-
-        # 2. 내측 호
-        rect1 = QRectF(-6.5, -2.5, 13, 13)
-        painter.drawArc(rect1, start_angle, span_angle)
-
-        # 3. 중간 호
-        rect2 = QRectF(-10.5, -6.5, 21, 21)
-        painter.drawArc(rect2, start_angle, span_angle)
-
-        # 4. 외측 호
-        rect3 = QRectF(-14.5, -10.5, 29, 29)
-        painter.drawArc(rect3, start_angle, span_angle)
-
-    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        '''드래그 이동 시 Snap-to-Grid 연산 및 붉은 점선 가이드선 위치 동기화'''
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
-            views = self.scene().views()
-            if views and isinstance(views[0], SurveyCanvas):
-                canvas = views[0]
-                new_pos: QPointF = value
-
-                if canvas.show_grid and canvas.meters_per_pixel > 0:
-                    px_per_meter = 1.0 / canvas.meters_per_pixel
-                    snap_x = round((new_pos.x() - canvas.grid_offset_x) / px_per_meter) * px_per_meter + canvas.grid_offset_x
-                    snap_y = round((new_pos.y() - canvas.grid_offset_y) / px_per_meter) * px_per_meter + canvas.grid_offset_y
-                else:
-                    snap_x, snap_y = new_pos.x(), new_pos.y()
-
-                # EDIT_PAN 모드에서 드래그 중 가이드선 표시 및 위치 업데이트
-                if canvas.mode == "EDIT_PAN":
-                    canvas.update_crosshair_pos(snap_x, snap_y, visible=True)
-
-                return QPointF(snap_x, snap_y)
-        return super().itemChange(change, value)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        scene = self.scene()
-        if scene and scene.views():
-            view = scene.views()[0]
-            if isinstance(view, SurveyCanvas):
-                if view.mode == "EDIT_PAN":
-                    view.update_crosshair_pos(0, 0, visible=False)
-                if self.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable:
-                    view.marker_moved.emit(self.data(KEY_DATA_OBJ), self.scenePos().x(), self.scenePos().y())
-
-
-class APMarkerItem(QGraphicsEllipseItem):
-    def __init__(self, x_px: float, y_px: float, seq_id: int, ap_obj: object = None):
-        super().__init__(-8, -8, 16, 16)
-        self.setPos(x_px, y_px)
-        self.setZValue(20)
-
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-
-        ap_color = QColor("#FFCC00")
-
-        self.setBrush(QBrush(ap_color))
-        self.setPen(QPen(Qt.GlobalColor.white, 1.5))
-
-        self.label_bg = QGraphicsRectItem(self)
-        self.label_bg.setBrush(QBrush(QColor(40, 30, 0, 200)))
-        self.label_bg.setPen(Qt.PenStyle.NoPen)
-        self.label_bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-
-        self.label_txt = QGraphicsSimpleTextItem(f"AP #{seq_id}", self.label_bg)
-        self.label_txt.setFont(QFont("Sans", 8, QFont.Weight.Bold))
-        self.label_txt.setBrush(QBrush(ap_color))
-        self.label_txt.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-
-        t_rect = self.label_txt.boundingRect()
-        padding = 4
-        self.label_bg.setRect(0, 0, t_rect.width() + padding * 2, t_rect.height() + padding * 2)
-        self.label_txt.setPos(padding, padding)
-
-        self.label_bg.setPos(8, 8)
-
-        self.setData(KEY_ITEM_TYPE, TYPE_AP)
-        self.setData(KEY_DATA_OBJ, ap_obj)
-
-        self.full_tooltip = f"AP Marker #{seq_id}\nPos: ({x_px:.1f}px, {y_px:.1f}px)"
-        self.setToolTip("")
-        self.setAcceptHoverEvents(False)
-
-    def paint(self, painter: QPainter, option: Any, widget: Any = None):
-        option.state &= ~QStyle.StateFlag.State_Selected
-        option.state &= ~QStyle.StateFlag.State_HasFocus
-        super().paint(painter, option, widget)
-
-    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        '''드래그 이동 시 Snap-to-Grid 연산 및 붉은 점선 가이드선 위치 동기화'''
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
-            views = self.scene().views()
-            if views and isinstance(views[0], SurveyCanvas):
-                canvas = views[0]
-                new_pos: QPointF = value
-
-                if canvas.show_grid and canvas.meters_per_pixel > 0:
-                    px_per_meter = 1.0 / canvas.meters_per_pixel
-                    snap_x = round((new_pos.x() - canvas.grid_offset_x) / px_per_meter) * px_per_meter + canvas.grid_offset_x
-                    snap_y = round((new_pos.y() - canvas.grid_offset_y) / px_per_meter) * px_per_meter + canvas.grid_offset_y
-                else:
-                    snap_x, snap_y = new_pos.x(), new_pos.y()
-
-                # EDIT_PAN 모드에서 드래그 중 가이드선 표시 및 위치 업데이트
-                if canvas.mode == "EDIT_PAN":
-                    canvas.update_crosshair_pos(snap_x, snap_y, visible=True)
-
-                return QPointF(snap_x, snap_y)
-        return super().itemChange(change, value)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        scene = self.scene()
-        if scene and scene.views():
-            view = scene.views()[0]
-            if isinstance(view, SurveyCanvas):
-                if view.mode == "EDIT_PAN":
-                    view.update_crosshair_pos(0, 0, visible=False)
-                if self.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable:
-                    view.marker_moved.emit(self.data(KEY_DATA_OBJ), self.scenePos().x(), self.scenePos().y())
+from spatial.heatmap_generator import HeatmapGenerator
+from ui.canvas.constants import KEY_ITEM_TYPE, KEY_DATA_OBJ, TYPE_SCALE, TYPE_AP, TYPE_SAMPLE
+from ui.canvas.items import MeasureMarkerItem, APMarkerItem
+from ui.widgets.heatmap_legend_widget import HeatmapLegendWidget  # [핵심] Legend 위젯 임포트
 
 
 class SurveyCanvas(QGraphicsView):
@@ -214,7 +29,6 @@ class SurveyCanvas(QGraphicsView):
     sample_deleted = Signal(object)
     scale_deleted = Signal()
     overlap_detected = Signal(str)
-    
 
     def __init__(self):
         super().__init__()
@@ -228,6 +42,13 @@ class SurveyCanvas(QGraphicsView):
         self.scale_preview_line: QGraphicsLineItem | None = None
         self.scale_items = []
         self.marker_items = []
+
+        self.heatmap_item: QGraphicsPixmapItem | None = None
+        self.show_heatmap = False
+
+        # [핵심] 우측 하단 고정 오버레이 Legend 위젯 생성
+        self.legend_widget = HeatmapLegendWidget(self)
+        self.legend_widget.setVisible(False)
 
         self.meters_per_pixel = 0.05
         self.min_marker_dist_px = 15.0
@@ -271,8 +92,15 @@ class SurveyCanvas(QGraphicsView):
         self.setMouseTracking(True)
         self.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333333;")
 
+    def resizeEvent(self, event):
+        '''[핵심] 뷰포트 크기 변경 시 Legend 오버레이를 우측 하단 정위치에 고정 재배치'''
+        super().resizeEvent(event)
+        margin = 16
+        x = self.width() - self.legend_widget.width() - margin
+        y = self.height() - self.legend_widget.height() - margin
+        self.legend_widget.move(max(0, x), max(0, y))
+
     def update_crosshair_pos(self, x_px: float, y_px: float, visible: bool = True):
-        '''가이드선(Crosshair) 위치 및 가시성을 외부 마커 이벤트에서 직접 제어하는 슬롯'''
         if not self.pixmap_item:
             return
         rect = self.pixmap_item.boundingRect()
@@ -281,6 +109,44 @@ class SurveyCanvas(QGraphicsView):
         if visible:
             self.crosshair_v.setLine(x_px, 0, x_px, rect.height())
             self.crosshair_h.setLine(0, y_px, rect.width(), y_px)
+
+    def toggle_heatmap(self, state: bool, points_data: list[tuple[float, float, float]] | None = None):
+        '''히트맵 및 Legend 오버레이 가시성 통합 제어'''
+        self.show_heatmap = state
+        if self.show_heatmap and points_data is not None:
+            self.render_heatmap(points_data)
+        else:
+            if self.heatmap_item:
+                self.heatmap_item.setVisible(False)
+            self.legend_widget.setVisible(False)
+
+    def render_heatmap(self, points_data: list[tuple[float, float, float]]):
+        '''수집된 픽셀 측정점을 기반으로 전역 연속 등고선 히트맵 렌더링 (-80 zValue)'''
+        if not self.pixmap_item:
+            return
+
+        rect = self.pixmap_item.boundingRect()
+        width_px = int(rect.width())
+        height_px = int(rect.height())
+
+        pixmap = HeatmapGenerator.generate_heatmap_pixmap(
+            points=points_data,
+            width_px=width_px,
+            height_px=height_px,
+            meters_per_pixel=self.meters_per_pixel,
+            downscale_factor=4,
+            alpha_opacity=160
+        )
+
+        if not pixmap.isNull():
+            if not self.heatmap_item:
+                self.heatmap_item = self.scene_obj.addPixmap(pixmap)
+                self.heatmap_item.setZValue(-80)
+            else:
+                self.heatmap_item.setPixmap(pixmap)
+
+            self.heatmap_item.setVisible(self.show_heatmap)
+            self.legend_widget.setVisible(self.show_heatmap)
 
     def is_position_overlapping(self, x_px: float, y_px: float) -> bool:
         for item in self.marker_items:
@@ -371,6 +237,9 @@ class SurveyCanvas(QGraphicsView):
         self.scale_preview_line = None
         self.scale_items.clear()
         self.marker_items.clear()
+        self.heatmap_item = None
+        self.show_heatmap = False
+        self.legend_widget.setVisible(False)
         self.grid_group = None
         self.grid_offset_x = 0.0
         self.grid_offset_y = 0.0

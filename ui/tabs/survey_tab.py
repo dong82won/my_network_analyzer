@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
-[Edit]과 [Grid] 사이의 구분선(sep3)이 제거되어 연속 배치되고,
-setEnabled 기반 레이아웃 고정 및 파일 I/O Safeguard가 반영된 전체 SurveyTab 모듈입니다.
+3초 샘플링 집계 처리 최적화, GUI 스레드 블로킹 방지, 예외 세션 Cleanup 및
+SURVEY MODE 실시간 히트맵 자동 트리거 파이프라인이 보완된 전체 SurveyTab 모듈입니다.
 '''
 
 import copy
@@ -18,15 +18,82 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import APMarker, NetworkMetrics, SurveyPoint, SurveyProject
-from spatial.coordinate import CoordinateConverter
+from spatial import CoordinateConverter
 from storage.project_manager import ProjectManager
+from ui.canvas import SurveyCanvas
 from ui.dialogs.ap_selection_dialog import APSelectionDialog
 from ui.widgets.radial_progress_item import RadialProgressItem
-from ui.widgets.survey_canvas import SurveyCanvas
+
+STYLE_BTN_COMMON = """
+    QPushButton {
+        background-color: #3a3d41;
+        color: #dddddd;
+        font-weight: bold;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #555555;
+        color: #ffffff;
+    }
+    QPushButton:disabled {
+        background-color: #2b2b2b;
+        color: #555555;
+        font-weight: normal;
+    }
+"""
+
+STYLE_BTN_ACTIVE = """
+    QPushButton {
+        background-color: #007acc;
+        color: #ffffff;
+        font-weight: bold;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #005999;
+    }
+    QPushButton:disabled {
+        background-color: #2b2b2b;
+        color: #555555;
+        font-weight: normal;
+    }
+"""
+
+STYLE_MODE_OFF = """
+    QPushButton {
+        background-color: #3a3d41;
+        color: #aaaaaa;
+        font-weight: bold;
+        padding: 6px 14px;
+        border-radius: 4px;
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #555555;
+        color: #ffffff;
+    }
+"""
+
+STYLE_MODE_ON = """
+    QPushButton {
+        background-color: #007acc;
+        color: #ffffff;
+        font-weight: bold;
+        padding: 6px 14px;
+        border-radius: 4px;
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #005999;
+    }
+"""
 
 
 class HubClickableCard(QFrame):
-    '''QGraphicsView 오버레이 페인트 충돌을 방지하는 커스텀 카드 위젯'''
     clicked = Signal()
 
     def __init__(self, title: str, subtitle: str, parent=None):
@@ -75,7 +142,7 @@ class SurveyTab(QWidget):
 
         self._sampling_timer: QTimer | None = None
         self._sampling_ticks = 0
-        self._sampling_total_ticks = 30
+        self._sampling_total_ticks = 30  # 100ms * 30회 = 3초
         self._sample_buffer: list[NetworkMetrics] = []
         self._target_px = (0.0, 0.0)
         self._radial_hud: RadialProgressItem | None = None
@@ -90,9 +157,6 @@ class SurveyTab(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # -----------------------------------------------------------------
-        # 1. 상단 동적 툴바 (구분선 sep3 제거로 연속 배치)
-        # -----------------------------------------------------------------
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(0, 0, 0, 0)
         top_bar.setSpacing(8)
@@ -102,31 +166,12 @@ class SurveyTab(QWidget):
         active_tools_layout.setContentsMargins(0, 0, 0, 0)
         active_tools_layout.setSpacing(8)
 
-        btn_style_common = """
-            QPushButton {
-                background-color: #3a3d41;
-                color: white;
-                font-weight: bold;
-                padding: 6px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #555555; }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #555555;
-            }
-        """
-
-        # [Group 1] File I/O & Workflow Mode
-        self.btn_open_project = QPushButton("📂 Open ")
-        self.btn_open_project.setStyleSheet(btn_style_common)
+        self.btn_open_project = QPushButton("📂 OPEN ")
+        self.btn_open_project.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_open_project.clicked.connect(self._on_toolbar_open_project)
 
-        self.btn_save_project = QPushButton("💾 Save ")
-        self.btn_save_project.setStyleSheet("""
-            QPushButton { background-color: #007acc; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px; }
-            QPushButton:hover { background-color: #005999; }
-        """)
+        self.btn_save_project = QPushButton("💾 SAVE ")
+        self.btn_save_project.setStyleSheet(STYLE_BTN_ACTIVE)
         self.btn_save_project.clicked.connect(self._on_save_project)
 
         sep1 = QFrame()
@@ -142,34 +187,36 @@ class SurveyTab(QWidget):
         self.btn_mode_setup.clicked.connect(lambda: self._switch_workflow_mode("SETUP"))
         self.btn_mode_survey.clicked.connect(lambda: self._switch_workflow_mode("LIVE_SURVEY"))
 
-        # [Group 2] Spatial Setup Tools & View Tools 통합
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setStyleSheet("color: #444444;")
 
-        self.btn_set_scale = QPushButton("📏 Scale")
-        self.btn_set_scale.setStyleSheet(btn_style_common)
+        self.btn_set_scale = QPushButton("📏 SCALE")
+        self.btn_set_scale.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_set_scale.clicked.connect(self._on_start_scale_calibration)
 
         self.btn_add_ap = QPushButton("📡 AP")
-        self.btn_add_ap.setStyleSheet(btn_style_common)
+        self.btn_add_ap.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_add_ap.clicked.connect(self._on_start_ap_place_mode)
 
-        self.btn_edit_pan = QPushButton("🖐️ Edit")
-        self.btn_edit_pan.setStyleSheet(btn_style_common)
+        self.btn_edit_pan = QPushButton("🖐️ EDIT")
+        self.btn_edit_pan.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_edit_pan.clicked.connect(self._on_start_edit_pan_mode)
 
-        # Viewport Control Tools (sep3 제거로 Edit 직후 바로 배치)
-        self.btn_toggle_grid = QPushButton("🌐 Grid ")
+        self.btn_toggle_grid = QPushButton("🌐 GRID ")
         self.btn_toggle_grid.setCheckable(True)
-        self.btn_toggle_grid.setStyleSheet(btn_style_common)
+        self.btn_toggle_grid.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_toggle_grid.toggled.connect(self._on_toggle_grid)
 
-        self.btn_reset_view = QPushButton("🔍 Reset ")
-        self.btn_reset_view.setStyleSheet(btn_style_common)
+        self.btn_reset_view = QPushButton("🔍 RESET ")
+        self.btn_reset_view.setStyleSheet(STYLE_BTN_COMMON)
         self.btn_reset_view.clicked.connect(self._on_reset_view)
 
-        # 레이아웃 순서 배치 ([Edit] | [Grid] 세로선 제거)
+        self.btn_toggle_heatmap = QPushButton("🔥 HEATMAP ")
+        self.btn_toggle_heatmap.setCheckable(True)
+        self.btn_toggle_heatmap.setStyleSheet(STYLE_BTN_COMMON)
+        self.btn_toggle_heatmap.toggled.connect(self._on_toggle_heatmap)
+
         active_tools_layout.addWidget(self.btn_open_project)
         active_tools_layout.addWidget(self.btn_save_project)
         active_tools_layout.addWidget(sep1)
@@ -179,21 +226,17 @@ class SurveyTab(QWidget):
         active_tools_layout.addWidget(self.btn_set_scale)
         active_tools_layout.addWidget(self.btn_add_ap)
         active_tools_layout.addWidget(self.btn_edit_pan)
-        # sep3 제거 구역
         active_tools_layout.addWidget(self.btn_toggle_grid)
         active_tools_layout.addWidget(self.btn_reset_view)
+        active_tools_layout.addWidget(self.btn_toggle_heatmap)
 
         top_bar.addWidget(self.active_tools_widget)
         top_bar.addStretch()
 
         layout.addLayout(top_bar)
 
-        # -----------------------------------------------------------------
-        # 2. QStackedWidget 기반 중앙 영역
-        # -----------------------------------------------------------------
         self.stacked_widget = QStackedWidget()
 
-        # [Page 0: Start Hub Page]
         self.page_hub = QWidget()
         hub_main_layout = QVBoxLayout(self.page_hub)
         hub_main_layout.setContentsMargins(0, 0, 0, 0)
@@ -236,7 +279,6 @@ class SurveyTab(QWidget):
         hub_main_layout.addLayout(hub_center_h)
         hub_main_layout.addStretch()
 
-        # [Page 1: Survey Canvas Page]
         self.page_canvas = QWidget()
         canvas_page_layout = QVBoxLayout(self.page_canvas)
         canvas_page_layout.setContentsMargins(0, 0, 0, 0)
@@ -255,29 +297,55 @@ class SurveyTab(QWidget):
 
         canvas_page_layout.addWidget(self.canvas)
 
-        self.stacked_widget.addWidget(self.page_hub)     # Index 0
-        self.stacked_widget.addWidget(self.page_canvas)  # Index 1
+        self.stacked_widget.addWidget(self.page_hub)
+        self.stacked_widget.addWidget(self.page_canvas)
 
         layout.addWidget(self.stacked_widget)
 
-        # -----------------------------------------------------------------
-        # 3. 하단 상태 바
-        # -----------------------------------------------------------------
         self.lbl_status = QLabel("Status: Ready.")
         self.lbl_status.setStyleSheet("color: #888888; font-size: 11px; font-weight: bold;")
         layout.addWidget(self.lbl_status)
 
         self._switch_workflow_mode("EMPTY")
 
+    def _get_canvas_points_data(self) -> list[tuple[float, float, float]]:
+        pts = []
+        for sp in self.project.survey_points:
+            x_px, y_px = self.converter.meter_to_pixel(sp.x_m, sp.y_m)
+            pts.append((x_px, y_px, float(sp.metrics.rssi)))
+        return pts
+
+    def _on_toggle_heatmap(self, checked: bool):
+        pts_data = self._get_canvas_points_data()
+        self.canvas.toggle_heatmap(checked, pts_data)
+
+        self.btn_toggle_heatmap.setStyleSheet(STYLE_BTN_ACTIVE if checked else STYLE_BTN_COMMON)
+        if checked:
+            self.lbl_status.setText(f"Heatmap Enabled: Rendered with {len(pts_data)} measure points.")
+        else:
+            self.lbl_status.setText("Heatmap Disabled.")
+
     def _on_overlap_detected(self, message: str):
         self.lbl_status.setText(f"⚠️ {message}")
 
-    def _switch_workflow_mode(self, mode: str):
-        self.workflow_mode = mode
+    def _cancel_sampling_session(self):
+        '''[보완] 진행 중인 3초 샘플링 타이머 및 HUD를 정돈하는 안전 중단 함수'''
+        if self._sampling_timer and self._sampling_timer.isActive():
+            self._sampling_timer.stop()
+            self._sampling_timer = None
 
-        style_setup_off = "background-color: #3a3d41; color: #aaa; font-weight: bold; padding: 6px 14px; border-radius: 4px;"
-        style_setup_on = "background-color: #007acc; color: white; font-weight: bold; padding: 6px 14px; border-radius: 4px;"
-        style_survey_on = "background-color: #007acc; color: white; font-weight: bold; padding: 6px 14px; border-radius: 4px;"
+        scene_obj: Any = self.canvas.scene()
+        if self._radial_hud and scene_obj:
+            scene_obj.removeItem(self._radial_hud)
+            self._radial_hud = None
+
+        self._sample_buffer.clear()
+        self._sampling_ticks = 0
+
+    def _switch_workflow_mode(self, mode: str):
+        # 모드 전환 시 진행 중인 샘플링 중단
+        self._cancel_sampling_session()
+        self.workflow_mode = mode
 
         if mode == "EMPTY":
             self.active_tools_widget.setVisible(False)
@@ -291,35 +359,44 @@ class SurveyTab(QWidget):
             if mode == "SETUP":
                 self.btn_mode_setup.setChecked(True)
                 self.btn_mode_survey.setChecked(False)
-                self.btn_mode_setup.setStyleSheet(style_setup_on)
-                self.btn_mode_survey.setStyleSheet(style_setup_off)
+                self.btn_mode_setup.setStyleSheet(STYLE_MODE_ON)
+                self.btn_mode_survey.setStyleSheet(STYLE_MODE_OFF)
 
                 self.btn_set_scale.setEnabled(True)
                 self.btn_add_ap.setEnabled(True)
                 self.btn_edit_pan.setEnabled(True)
+                self.btn_toggle_grid.setEnabled(True)
+                self.btn_reset_view.setEnabled(True)
+
+                if self.btn_toggle_heatmap.isChecked():
+                    self.btn_toggle_heatmap.setChecked(False)
+                self.btn_toggle_heatmap.setEnabled(False)
 
                 self._on_start_edit_pan_mode()
-                self.lbl_status.setText(f"SETUP MODE [{self.project.name}]: Calibrate scale, place AP markers, or toggle grid.")
+                self.lbl_status.setText(f"SETUP MODE [{self.project.name}]: Calibrate scale, place AP markers, edit, or toggle grid.")
 
             elif mode == "LIVE_SURVEY":
                 self.btn_mode_setup.setChecked(False)
                 self.btn_mode_survey.setChecked(True)
-                self.btn_mode_setup.setStyleSheet(style_setup_off)
-                self.btn_mode_survey.setStyleSheet(style_survey_on)
+                self.btn_mode_setup.setStyleSheet(STYLE_MODE_OFF)
+                self.btn_mode_survey.setStyleSheet(STYLE_MODE_ON)
 
-                # Scale과 AP만 비활성화하고 Edit, Grid, Reset은 활성화 유지
                 self.btn_set_scale.setEnabled(False)
                 self.btn_add_ap.setEnabled(False)
-                self.btn_edit_pan.setEnabled(True)
+                self.btn_edit_pan.setEnabled(False)
+                self.btn_toggle_grid.setEnabled(False)
+                self.btn_reset_view.setEnabled(False)
+
+                self.btn_toggle_heatmap.setEnabled(True)
+                if not self.btn_toggle_heatmap.isChecked():
+                    self.btn_toggle_heatmap.setChecked(True)
 
                 self._update_canvas_mode("MEASURE")
                 self.lbl_status.setText(f"LIVE SURVEY ACTIVE [{self.project.name}]: Click map or press SPACEBAR to sample.")
 
     def _on_toggle_grid(self, checked: bool):
         self.canvas.toggle_grid(checked)
-        style_inactive = "background-color: #3a3d41; color: white; padding: 6px 10px;"
-        style_active = "background-color: #007acc; color: white; font-weight: bold; padding: 6px 10px;"
-        self.btn_toggle_grid.setStyleSheet(style_active if checked else style_inactive)
+        self.btn_toggle_grid.setStyleSheet(STYLE_BTN_ACTIVE if checked else STYLE_BTN_COMMON)
         if checked:
             self.lbl_status.setText("Grid Enabled: Hold Shift + Drag mouse on canvas to offset grid.")
         else:
@@ -374,6 +451,7 @@ class SurveyTab(QWidget):
             text="project_analyzer"
         )
         if ok and proj_name.strip():
+            self._cancel_sampling_session()
             self.canvas.clear_all_layers()
 
             raw_name = proj_name.strip()
@@ -398,6 +476,7 @@ class SurveyTab(QWidget):
         if file_path:
             loaded_proj = ProjectManager.load_project(file_path)
             if loaded_proj:
+                self._cancel_sampling_session()
                 self.canvas.clear_all_layers()
 
                 self.project = loaded_proj
@@ -450,19 +529,9 @@ class SurveyTab(QWidget):
         if canvas_mode != "AP_PLACE":
             self.canvas.ghost_ap.setVisible(False)
 
-        style_inactive = """
-            QPushButton { background-color: #3a3d41; color: white; padding: 6px 10px; border-radius: 4px; }
-            QPushButton:hover { background-color: #555555; }
-            QPushButton:disabled { background-color: #2b2b2b; color: #555555; }
-        """
-        style_active = """
-            QPushButton { background-color: #007acc; color: white; font-weight: bold; padding: 6px 10px; border-radius: 4px; }
-            QPushButton:disabled { background-color: #2b2b2b; color: #555555; }
-        """
-
-        self.btn_set_scale.setStyleSheet(style_active if canvas_mode == "SCALE" else style_inactive)
-        self.btn_add_ap.setStyleSheet(style_active if canvas_mode == "AP_PLACE" else style_inactive)
-        self.btn_edit_pan.setStyleSheet(style_active if canvas_mode == "EDIT_PAN" else style_inactive)
+        self.btn_set_scale.setStyleSheet(STYLE_BTN_ACTIVE if canvas_mode == "SCALE" else STYLE_BTN_COMMON)
+        self.btn_add_ap.setStyleSheet(STYLE_BTN_ACTIVE if canvas_mode == "AP_PLACE" else STYLE_BTN_COMMON)
+        self.btn_edit_pan.setStyleSheet(STYLE_BTN_ACTIVE if canvas_mode == "EDIT_PAN" else STYLE_BTN_COMMON)
 
     def _on_start_edit_pan_mode(self):
         self._update_canvas_mode("EDIT_PAN")
@@ -547,6 +616,7 @@ class SurveyTab(QWidget):
             self._sampling_timer = None
 
     def _aggregate_and_save_point(self):
+        '''[최적화] 3초 수집 버퍼 기반 중위수/평균 집계 및 GUI 스레드 블로킹 차단 고속 처리'''
         if not self._sample_buffer:
             return
 
@@ -554,17 +624,18 @@ class SurveyTab(QWidget):
         x_m, y_m = self.converter.pixel_to_meter(x_px, y_px)
         next_seq_id = len(self.project.survey_points) + 1
 
-        rssi_list = [m.rssi for m in self._sample_buffer]
+        # 1. 3초 샘플링 버퍼 통계 연산 (신호: 중위수, 나머지: 평균)
+        rssi_list = [m.rssi for m in self._sample_buffer if m.rssi != 0]
         lat_list = [m.latency_ms for m in self._sample_buffer]
         loss_list = [m.packet_loss_pct for m in self._sample_buffer]
         jit_list = [m.jitter_ms for m in self._sample_buffer]
         score_list = [m.score for m in self._sample_buffer]
 
-        agg_rssi = int(statistics.median(rssi_list))
-        agg_lat = round(statistics.mean(lat_list), 1)
-        agg_loss = round(statistics.mean(loss_list), 1)
-        agg_jit = round(statistics.mean(jit_list), 1)
-        agg_score = int(statistics.mean(score_list))
+        agg_rssi = int(statistics.median(rssi_list)) if rssi_list else -100
+        agg_lat = round(statistics.mean(lat_list), 1) if lat_list else 0.0
+        agg_loss = round(statistics.mean(loss_list), 1) if loss_list else 100.0
+        agg_jit = round(statistics.mean(jit_list), 1) if jit_list else 0.0
+        agg_score = int(statistics.mean(score_list)) if score_list else 0
 
         base_m = copy.deepcopy(self._sample_buffer[-1])
         base_m.rssi = agg_rssi
@@ -573,10 +644,13 @@ class SurveyTab(QWidget):
         base_m.jitter_ms = agg_jit
         base_m.score = agg_score
 
+        # 2. GUI 스레드 멈춤(Freezing) 방지를 위한 AP 스냅샷 안전 수집
         scanned_snapshot: dict[str, int] = {}
         if hasattr(self.main_window, 'collector') and self.main_window.collector:
+            # collector 백그라운드 수집 결과 객체를 안전하게 활용하여 UI 블로킹 차단
             scanned_snapshot = self.main_window.collector.get_scanned_aps_snapshot()
 
+        # 3. SurveyPoint 데이터 모델 저장 및 Canvas 표출
         sp = SurveyPoint(
             x_m=x_m,
             y_m=y_m,
@@ -587,10 +661,18 @@ class SurveyTab(QWidget):
         )
         self.project.survey_points.append(sp)
         self.canvas.draw_survey_point(x_px, y_px, agg_rssi, next_seq_id, sp)
+
         self.lbl_status.setText(
             f"Point #{next_seq_id} SAVED (3s Aggregated, Scanned APs: {len(scanned_snapshot)}) - "
             f"Median RSSI: {agg_rssi} dBm, Avg Latency: {agg_lat} ms"
         )
+
+        # 4. SURVEY MODE 시 히트맵 및 Legend 오버레이 실시간 즉시 트리거
+        if self.workflow_mode == "LIVE_SURVEY":
+            if not self.canvas.show_heatmap:
+                self.canvas.show_heatmap = True
+                self.btn_toggle_heatmap.setChecked(True)
+            self.canvas.render_heatmap(self._get_canvas_points_data())
 
     def _on_scale_points_selected(self, x1, y1, x2, y2):
         real_dist, ok = QInputDialog.getDouble(self, "Real Distance", "Distance (meters):", 10.0, 0.1, 1000.0, 2)
@@ -641,6 +723,8 @@ class SurveyTab(QWidget):
         elif isinstance(obj_ref, SurveyPoint):
             obj_ref.x_m = new_x_m
             obj_ref.y_m = new_y_m
+            if self.canvas.show_heatmap:
+                self.canvas.render_heatmap(self._get_canvas_points_data())
 
     def _reindex_and_redraw_aps(self):
         self.canvas.clear_ap_graphics()
@@ -655,6 +739,9 @@ class SurveyTab(QWidget):
             sp.sequence_id = idx
             x_px, y_px = self.converter.meter_to_pixel(sp.x_m, sp.y_m)
             self.canvas.draw_survey_point(x_px, y_px, sp.metrics.rssi, sp.sequence_id, sp)
+
+        if self.canvas.show_heatmap:
+            self.canvas.render_heatmap(self._get_canvas_points_data())
 
     def _on_ap_deleted(self, ap_obj: Any):
         if ap_obj in self.project.ap_markers:

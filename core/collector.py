@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 '''
-NetworkManager 패시브 상태 파싱, 주변 AP 스캔 수집, 사설/공인 IP 대역 판별, 백그라운드 PING 수집기 모듈입니다.
+NetworkManager 패시브 상태 파싱, 주변 AP 스캔 수집, 사설/공인 IP 대역 판별,
+순수 동적 품질 평가(Approach A) 기반 건강 점수 산출 백그라운드 PING 수집기 모듈입니다.
 '''
 
-import re
-import subprocess
-import statistics
 import ipaddress
+import re
+import statistics
+import subprocess
 import time
 from datetime import datetime
 from typing import Any
+
 from PySide6.QtCore import QThread, Signal
 
 from core.models import NetworkMetrics
@@ -34,7 +36,7 @@ class NetworkDataCollector(QThread):
         while self.is_running:
             loop_start_time = time.time()
             metrics = NetworkMetrics(interface=self.interface)
-            metrics.timestamp = loop_start_time  # [핵심] 실제 수집 시작 타임스탬프 고정
+            metrics.timestamp = loop_start_time
 
             self._get_wifi_info(metrics)
             self._get_wired_info(metrics)
@@ -51,6 +53,7 @@ class NetworkDataCollector(QThread):
 
             now_str = datetime.fromtimestamp(metrics.timestamp).strftime("%H:%M:%S")
 
+            # 이벤트 로깅 파이프라인
             if metrics.wifi_connected and not self.last_wifi_connected:
                 self.event_occurred.emit(now_str, "WIFI_CONN", "INFO", f"Connected to {metrics.ssid} ({metrics.bssid})")
             elif not metrics.wifi_connected and self.last_wifi_connected:
@@ -65,7 +68,7 @@ class NetworkDataCollector(QThread):
                 metrics.bssid != "--:--:--:--:--:--" and self.last_bssid != metrics.bssid):
                 self.event_occurred.emit(now_str, "AP_ROAMING", "INFO", f"AP Changed: {self.last_bssid} -> {metrics.bssid}")
 
-            lat_spike_threshold = 50.0 if metrics.target_mode == "LAN" else 100.0
+            lat_spike_threshold = 30.0 if metrics.target_mode == "LAN" else 80.0
             if metrics.wifi_connected:
                 if metrics.latency_ms > lat_spike_threshold and not self.last_spike_logged:
                     self.event_occurred.emit(now_str, "LATENCY_SPIKE", "WARN", f"High Latency ({metrics.target_mode}): {metrics.latency_ms} ms")
@@ -81,10 +84,9 @@ class NetworkDataCollector(QThread):
             if metrics.bssid != "--:--:--:--:--:--":
                 self.last_bssid = metrics.bssid
 
-            # 수집 완료 후 UI로 데이터 전달
             self.metrics_updated.emit(metrics)
 
-            # [핵심] 소요 시간을 계산하여 총 루프 주기가 정확히 1.0초가 되도록 대기 정밀 보정
+            # 정밀 1.0초 루프 주기 보정
             elapsed = time.time() - loop_start_time
             sleep_ms = max(50, int((1.0 - elapsed) * 1000))
             self.msleep(sleep_ms)
@@ -98,7 +100,7 @@ class NetworkDataCollector(QThread):
         scanned_dict: dict[str, int] = {}
         try:
             cmd = ["nmcli", "-t", "-f", "BSSID,SIGNAL", "dev", "wifi", "list", "--rescan", "no"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.2)
 
             if res.returncode == 0 and res.stdout.strip():
                 for line in res.stdout.strip().split('\n'):
@@ -115,11 +117,11 @@ class NetworkDataCollector(QThread):
         return scanned_dict
 
     def get_scanned_aps_detail(self) -> dict[str, dict[str, Any]]:
-        '''[확장] AP 배치 팝업용 BSSID, SSID, RSSI, 주파수, 채널, 대역, 보안규격, 최대속도 상세 스냅샷을 수집합니다.'''
+        '''AP 배치 팝업용 BSSID, SSID, RSSI, 주파수, 채널, 대역, 보안규격 상세 스냅샷 수집'''
         scanned_detail: dict[str, dict[str, Any]] = {}
         try:
             cmd = ["nmcli", "-t", "-f", "BSSID,SSID,SIGNAL,FREQ,CHAN,RATE,SECURITY", "dev", "wifi", "list", "--rescan", "no"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.2)
 
             if res.returncode == 0 and res.stdout.strip():
                 for line in res.stdout.strip().split('\n'):
@@ -176,7 +178,7 @@ class NetworkDataCollector(QThread):
     def _get_wifi_info(self, metrics: NetworkMetrics):
         try:
             cmd = ["nmcli", "-t", "-f", "ACTIVE,DEVICE,SSID,BSSID,SIGNAL,FREQ,RATE", "dev", "wifi", "list", "--rescan", "no"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.0)
 
             connected_found = False
             if res.returncode == 0 and res.stdout.strip():
@@ -211,12 +213,12 @@ class NetworkDataCollector(QThread):
     def _get_wifi_info_fallback(self, metrics: NetworkMetrics):
         try:
             iface_cmd = ["iw", "dev"]
-            iface_res = subprocess.run(iface_cmd, capture_output=True, text=True, timeout=1.0)
+            iface_res = subprocess.run(iface_cmd, capture_output=True, text=True, timeout=0.8)
             interfaces = re.findall(r'Interface\s+([\w]+)', iface_res.stdout)
             target_iface = self.interface if self.interface in interfaces else (interfaces[0] if interfaces else "wlan0")
 
             link_cmd = ["iw", "dev", target_iface, "link"]
-            link_res = subprocess.run(link_cmd, capture_output=True, text=True, timeout=1.0)
+            link_res = subprocess.run(link_cmd, capture_output=True, text=True, timeout=0.8)
 
             if "Connected to" in link_res.stdout:
                 metrics.interface = target_iface
@@ -246,7 +248,7 @@ class NetworkDataCollector(QThread):
     def _get_wired_info(self, metrics: NetworkMetrics):
         try:
             cmd = ["nmcli", "-t", "-f", "TYPE,STATE", "dev"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.0)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=0.8)
             wired_up = False
             if res.returncode == 0 and res.stdout.strip():
                 for line in res.stdout.strip().split('\n'):
@@ -265,12 +267,12 @@ class NetworkDataCollector(QThread):
             if metrics.interface == "wlan0" and self.interface != "wlan0":
                 metrics.interface = self.interface
 
-            res_ip = subprocess.run(["ip", "-4", "addr", "show", metrics.interface], capture_output=True, text=True, timeout=1.0)
+            res_ip = subprocess.run(["ip", "-4", "addr", "show", metrics.interface], capture_output=True, text=True, timeout=0.8)
             match_ip = re.search(r'inet\s+([\d\.]+)', res_ip.stdout)
             if match_ip:
                 metrics.ip_addr = match_ip.group(1)
 
-            res_gw = subprocess.run(["ip", "route", "show", "dev", metrics.interface], capture_output=True, text=True, timeout=1.0)
+            res_gw = subprocess.run(["ip", "route", "show", "dev", metrics.interface], capture_output=True, text=True, timeout=0.8)
             match_gw = re.search(r'default via ([\d\.]+)', res_gw.stdout)
             if match_gw:
                 metrics.gateway = match_gw.group(1)
@@ -285,14 +287,19 @@ class NetworkDataCollector(QThread):
             return
 
         try:
-            cmd = ["ping", "-I", metrics.interface, "-c", "3", "-i", "0.2", "-W", "0.5", metrics.target_host]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
-            if res.returncode == 0:
+            cmd = ["ping", "-I", metrics.interface, "-c", "3", "-i", "0.2", "-W", "0.4", metrics.target_host]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.2)
+            if res.returncode == 0 or "packet loss" in res.stdout:
                 times = [float(t) for t in re.findall(r'time=([\d\.]+)', res.stdout)]
                 loss_match = re.search(r'([\d\.]+)%\s+packet loss', res.stdout)
+
                 if times:
                     metrics.latency_ms = round(statistics.mean(times), 1)
                     metrics.jitter_ms = round(statistics.stdev(times), 1) if len(times) > 1 else 0.0
+                else:
+                    metrics.latency_ms = 0.0
+                    metrics.jitter_ms = 0.0
+
                 if loss_match:
                     metrics.packet_loss_pct = float(loss_match.group(1))
             else:
@@ -305,29 +312,46 @@ class NetworkDataCollector(QThread):
             metrics.packet_loss_pct = 100.0
 
     def _calculate_health_score(self, metrics: NetworkMetrics):
+        '''접근 방식 A: 순수 동적 품질 지표(RSSI, Latency, Loss, Jitter) 중심 0~100점 점수 산출'''
         if not metrics.wifi_connected or metrics.packet_loss_pct == 100.0:
             metrics.score = 0
             metrics.status_text = "BAD"
             return
 
-        s_rssi = max(0, min(100, int((metrics.rssi + 85) * (100 / 35))))
+        # 1. RSSI 점수 (가중치 20%) [-85 dBm -> 0점, -55 dBm -> 100점]
+        s_rssi = max(0.0, min(100.0, ((metrics.rssi - (-85.0)) / ((-55.0) - (-85.0))) * 100.0))
 
+        # 2. Latency 점수 (가중치 25%) [LAN: 5ms~100ms, WAN: 20ms~200ms]
         if metrics.target_mode == "LAN":
-            s_lat = max(0, min(100, int(100 - ((metrics.latency_ms - 15) * (100 / 135))))) if metrics.latency_ms > 0 else 0
+            min_lat, max_lat = 5.0, 100.0
         else:
-            s_lat = max(0, min(100, int(100 - ((metrics.latency_ms - 40) * (100 / 160))))) if metrics.latency_ms > 0 else 0
+            min_lat, max_lat = 20.0, 200.0
 
-        s_loss = max(0, min(100, int(100 - (metrics.packet_loss_pct * 10))))
-        s_jit = max(0, min(100, int(100 - ((metrics.jitter_ms - 2) * (100 / 28))))) if metrics.latency_ms > 0 else 0
+        if metrics.latency_ms <= min_lat:
+            s_lat = 100.0
+        else:
+            s_lat = max(0.0, min(100.0, 100.0 - ((metrics.latency_ms - min_lat) / (max_lat - min_lat)) * 100.0))
 
-        total = (s_rssi * 0.25) + (s_lat * 0.25) + (s_loss * 0.30) + (s_jit * 0.20)
-        metrics.score = max(0, min(100, int(total)))
+        # 3. Jitter 점수 (가중치 20%) [1.0ms -> 100점, 30.0ms -> 0점]
+        if metrics.jitter_ms <= 1.0:
+            s_jit = 100.0
+        else:
+            s_jit = max(0.0, min(100.0, 100.0 - ((metrics.jitter_ms - 1.0) / (30.0 - 1.0)) * 100.0))
 
-        if metrics.score >= 80:
+        # 4. Packet Loss 점수 (가중치 35%) [0% -> 100점, 25% 이상 -> 0점]
+        s_loss = max(0.0, min(100.0, 100.0 - (metrics.packet_loss_pct * 4.0)))
+
+        # 5. 가중치 합산 (총 1.0)
+        total_score = (s_loss * 0.35) + (s_lat * 0.25) + (s_jit * 0.20) + (s_rssi * 0.20)
+        final_score = int(round(total_score))
+        metrics.score = max(0, min(100, final_score))
+
+        # 6. 상태 텍스트 매핑
+        if metrics.score >= 85:
             metrics.status_text = "EXCELLENT"
-        elif metrics.score >= 60:
+        elif metrics.score >= 70:
             metrics.status_text = "GOOD"
-        elif metrics.score >= 40:
+        elif metrics.score >= 50:
             metrics.status_text = "WARNING"
         else:
             metrics.status_text = "BAD"

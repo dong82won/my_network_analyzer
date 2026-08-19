@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
-from spatial.coordinate import CoordinateConverter
+'''
+spatial 패키지 네임스페이스 노출 정의 모듈입니다.
+'''
 
-__all__ = ["CoordinateConverter"]
+from spatial.coordinate import CoordinateConverter
+from spatial.heatmap_generator import HeatmapGenerator
+
+__all__ = ["CoordinateConverter", "HeatmapGenerator"]

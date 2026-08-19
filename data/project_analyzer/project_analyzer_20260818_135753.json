@@ -1,0 +1,212 @@
+{
+    "name": "project_analyzer",
+    "created_at": "2026-08-18 13:56:47",
+    "floorplan": {
+        "image_path": "project_analyzer.jpg",
+        "width_px": 1280,
+        "height_px": 904,
+        "meters_per_pixel": 0.04855555555555556
+    },
+    "ap_markers": [
+        {
+            "bssid": "70:5D:CC:B8:3F:DF",
+            "ssid": "Rokey5G",
+            "x_m": 27.0,
+            "y_m": 13.0,
+            "channel_freq": "5200 MHz",
+            "channel_num": 40,
+            "wifi_band": "5GHz",
+            "security": "WPA2",
+            "max_rate": "270 Mbit/s",
+            "sequence_id": 1
+        },
+        {
+            "bssid": "70:5D:CC:B8:3F:DF",
+            "ssid": "Rokey5G",
+            "x_m": 36.0,
+            "y_m": 13.0,
+            "channel_freq": "5200 MHz",
+            "channel_num": 40,
+            "wifi_band": "5GHz",
+            "security": "WPA2",
+            "max_rate": "270 Mbit/s",
+            "sequence_id": 2
+        }
+    ],
+    "survey_points": [
+        {
+            "x_m": 39.0,
+            "y_m": 16.0,
+            "timestamp": 1787029049.1131058,
+            "metrics": {
+                "timestamp": 1787029048.3633454,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -58,
+                "latency_ms": 1.8,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 1.0,
+                "score": 94,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 1,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -58
+            }
+        },
+        {
+            "x_m": 39.0,
+            "y_m": 9.0,
+            "timestamp": 1787029053.612607,
+            "metrics": {
+                "timestamp": 1787029052.3618562,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -58,
+                "latency_ms": 1.4,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.3,
+                "score": 94,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 2,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -59
+            }
+        },
+        {
+            "x_m": 32.0,
+            "y_m": 9.0,
+            "timestamp": 1787029057.4124184,
+            "metrics": {
+                "timestamp": 1787029056.3602793,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -59,
+                "latency_ms": 4.5,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 5.8,
+                "score": 89,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 3,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -59
+            }
+        },
+        {
+            "x_m": 32.0,
+            "y_m": 16.0,
+            "timestamp": 1787029063.212658,
+            "metrics": {
+                "timestamp": 1787029062.3575163,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -59,
+                "latency_ms": 2.6,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 1.4,
+                "score": 92,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 4,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -59
+            }
+        },
+        {
+            "x_m": 24.0,
+            "y_m": 16.0,
+            "timestamp": 1787029068.0138268,
+            "metrics": {
+                "timestamp": 1787029067.3563595,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -59,
+                "latency_ms": 1.5,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.8,
+                "score": 92,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 5,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -59
+            }
+        },
+        {
+            "x_m": 24.0,
+            "y_m": 9.0,
+            "timestamp": 1787029071.411468,
+            "metrics": {
+                "timestamp": 1787029070.3553624,
+                "interface": "wlxfc221c5f4173",
+                "ssid": "Rokey5G",
+                "bssid": "70:5D:CC:B8:3F:DF",
+                "ip_addr": "192.168.0.128",
+                "gateway": "192.168.0.1",
+                "target_host": "192.168.0.1",
+                "target_mode": "LAN",
+                "freq_ghz": "5200 MHz",
+                "link_speed_mbps": "270 Mbit/s",
+                "rssi": -59,
+                "latency_ms": 1.6,
+                "packet_loss_pct": 0.0,
+                "jitter_ms": 0.8,
+                "score": 92,
+                "status_text": "EXCELLENT",
+                "wifi_connected": true,
+                "wired_connected": true
+            },
+            "sequence_id": 6,
+            "scanned_aps": {
+                "70:5D:CC:B8:3F:DF": -58
+            }
+        }
+    ]
+}
