@@ -22,8 +22,11 @@ class MeasureMarkerItem(QGraphicsItem):
         self.seq_id = seq_id
         self.rssi = rssi
 
-        self.primary_color = QColor("#00E5FF")
-        self.current_color = QColor("#00E5FF")
+        # self.primary_color = QColor("#00E5FF")
+        # self.current_color = QColor("#00E5FF")
+
+        self.primary_color = QColor("#0052CC")
+        self.current_color = QColor("#0052CC")
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
@@ -34,7 +37,11 @@ class MeasureMarkerItem(QGraphicsItem):
 
         self.label_txt = QGraphicsSimpleTextItem(f"#{seq_id}", self.label_bg)
         self.label_txt.setFont(QFont("Sans", 8, QFont.Weight.Bold))
-        self.label_txt.setBrush(QBrush(self.primary_color))
+
+        #self.label_txt.setBrush(QBrush(self.primary_color))
+        self.label_txt.setBrush(QBrush(QColor(255, 255, 255, 230)))
+
+
         self.label_txt.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
         t_rect = self.label_txt.boundingRect()
@@ -59,25 +66,56 @@ class MeasureMarkerItem(QGraphicsItem):
         return QRectF(-16, -16, 32, 32)
 
     def paint(self, painter: QPainter, option: Any, widget: Any = None):
+        '''외각 흰색 1px 테두리 + 전면 시안색 코어 2패스 렌더링'''
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        pen = QPen(self.current_color, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-
-        painter.setBrush(QBrush(self.current_color))
-        painter.drawEllipse(QRectF(-2.5, 3.5, 5, 5))
 
         start_angle = 45 * 16
         span_angle = 90 * 16
 
         rect1 = QRectF(-6.5, -2.5, 13, 13)
-        painter.drawArc(rect1, start_angle, span_angle)
-
         rect2 = QRectF(-10.5, -6.5, 21, 21)
-        painter.drawArc(rect2, start_angle, span_angle)
-
         rect3 = QRectF(-14.5, -10.5, 29, 29)
+
+        # -----------------------------------------------------------------
+        # 1. 1st Pass: 외각 흰색 테두리 (Outer White Stroke - 4.0px)
+        # -----------------------------------------------------------------
+        outline_pen = QPen(
+            QColor(255, 255, 255, 255),  # [변경] 검은색 -> 흰색 테두리
+            4.0,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap
+        )
+        painter.setPen(outline_pen)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
+
+        # 점(Dot) 외곽선
+        painter.drawEllipse(QRectF(-2.5, 3.5, 5, 5))
+
+        # 호(Arc) 외곽선
+        painter.drawArc(rect1, start_angle, span_angle)
+        painter.drawArc(rect2, start_angle, span_angle)
         painter.drawArc(rect3, start_angle, span_angle)
+
+        # -----------------------------------------------------------------
+        # 2. 2nd Pass: 전면 선명한 시안색 전경 (Inner Core Stroke - 2.0px)
+        # -----------------------------------------------------------------
+        core_pen = QPen(
+            self.current_color,
+            2.0,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap
+        )
+        painter.setPen(core_pen)
+        painter.setBrush(QBrush(self.current_color))
+
+        # 점(Dot) 전경
+        painter.drawEllipse(QRectF(-2.5, 3.5, 5, 5))
+
+        # 호(Arc) 전경
+        painter.drawArc(rect1, start_angle, span_angle)
+        painter.drawArc(rect2, start_angle, span_angle)
+        painter.drawArc(rect3, start_angle, span_angle)
+
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         '''드래그 이동 시 5m Snap-to-Grid 및 가이드선 위치 동기화'''

@@ -17,7 +17,7 @@ from ui.tabs.settings_tab import SettingsTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Network Analyzer (Ubuntu 24.04)")
+        self.setWindowTitle("Network AP Analyzer v1.0 (by DW)")
         self.resize(800, 720)
         self.setStyleSheet("background-color: #1e1e1e; color: white;")
 
