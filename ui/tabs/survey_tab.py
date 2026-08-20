@@ -2,6 +2,7 @@
 '''
 3초 샘플링 집계 처리 최적화, GUI 스레드 블로킹 방지, 예외 세션 Cleanup 및
 SURVEY MODE 실시간 히트맵 자동 트리거 파이프라인이 보완된 전체 SurveyTab 모듈입니다.
+SURVEY MODE 진입 시 HEATMAP 자동 활성화 및 측정점 추가 시 실시간 히트맵/Legend 자동 갱신이 반영된 SurveyTab 모듈입니다.
 '''
 
 import copy
@@ -9,7 +10,7 @@ import statistics
 import time
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QRectF
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout,
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import APMarker, NetworkMetrics, SurveyPoint, SurveyProject
-from spatial import CoordinateConverter
+from spatial import CoordinateConverter, HeatmapGenerator  # [핵심] HeatmapGenerator 임포트 추가
 from storage.project_manager import ProjectManager
 from ui.canvas import SurveyCanvas
 from ui.dialogs.ap_selection_dialog import APSelectionDialog
@@ -615,8 +616,9 @@ class SurveyTab(QWidget):
             self._sampling_timer.stop()
             self._sampling_timer = None
 
+    # ui/tabs/survey_tab.py 내 _aggregate_and_save_point 메서드 갱신 내용
+
     def _aggregate_and_save_point(self):
-        '''[최적화] 3초 수집 버퍼 기반 중위수/평균 집계 및 GUI 스레드 블로킹 차단 고속 처리'''
         if not self._sample_buffer:
             return
 
@@ -624,33 +626,20 @@ class SurveyTab(QWidget):
         x_m, y_m = self.converter.pixel_to_meter(x_px, y_px)
         next_seq_id = len(self.project.survey_points) + 1
 
-        # 1. 3초 샘플링 버퍼 통계 연산 (신호: 중위수, 나머지: 평균)
         rssi_list = [m.rssi for m in self._sample_buffer if m.rssi != 0]
         lat_list = [m.latency_ms for m in self._sample_buffer]
-        loss_list = [m.packet_loss_pct for m in self._sample_buffer]
-        jit_list = [m.jitter_ms for m in self._sample_buffer]
-        score_list = [m.score for m in self._sample_buffer]
 
         agg_rssi = int(statistics.median(rssi_list)) if rssi_list else -100
         agg_lat = round(statistics.mean(lat_list), 1) if lat_list else 0.0
-        agg_loss = round(statistics.mean(loss_list), 1) if loss_list else 100.0
-        agg_jit = round(statistics.mean(jit_list), 1) if jit_list else 0.0
-        agg_score = int(statistics.mean(score_list)) if score_list else 0
 
         base_m = copy.deepcopy(self._sample_buffer[-1])
         base_m.rssi = agg_rssi
         base_m.latency_ms = agg_lat
-        base_m.packet_loss_pct = agg_loss
-        base_m.jitter_ms = agg_jit
-        base_m.score = agg_score
 
-        # 2. GUI 스레드 멈춤(Freezing) 방지를 위한 AP 스냅샷 안전 수집
         scanned_snapshot: dict[str, int] = {}
         if hasattr(self.main_window, 'collector') and self.main_window.collector:
-            # collector 백그라운드 수집 결과 객체를 안전하게 활용하여 UI 블로킹 차단
             scanned_snapshot = self.main_window.collector.get_scanned_aps_snapshot()
 
-        # 3. SurveyPoint 데이터 모델 저장 및 Canvas 표출
         sp = SurveyPoint(
             x_m=x_m,
             y_m=y_m,
@@ -662,17 +651,28 @@ class SurveyTab(QWidget):
         self.project.survey_points.append(sp)
         self.canvas.draw_survey_point(x_px, y_px, agg_rssi, next_seq_id, sp)
 
-        self.lbl_status.setText(
-            f"Point #{next_seq_id} SAVED (3s Aggregated, Scanned APs: {len(scanned_snapshot)}) - "
-            f"Median RSSI: {agg_rssi} dBm, Avg Latency: {agg_lat} ms"
+        # [아이디어 ③] 유효 측정 커버리지 면적(m²) 정밀 적분 산출
+        pts_data = self._get_canvas_points_data()
+        rect = self.canvas.pixmap_item.boundingRect() if self.canvas.pixmap_item else QRectF()
+
+        covered_area_m2 = HeatmapGenerator.calculate_survey_area_m2(
+            points=pts_data,
+            width_px=int(rect.width()),
+            height_px=int(rect.height()),
+            meters_per_pixel=self.converter.meters_per_pixel,
+            coverage_radius_m=7.5  # 5m 조사 규격 유효 면적 반경
         )
 
-        # 4. SURVEY MODE 시 히트맵 및 Legend 오버레이 실시간 즉시 트리거
+        self.lbl_status.setText(
+            f"Point #{next_seq_id} SAVED - Median RSSI: {agg_rssi} dBm, Avg Latency: {agg_lat} ms | "
+            f"📐 Total Surveyed Coverage: {covered_area_m2:.1f} m²"
+        )
+
         if self.workflow_mode == "LIVE_SURVEY":
             if not self.canvas.show_heatmap:
                 self.canvas.show_heatmap = True
                 self.btn_toggle_heatmap.setChecked(True)
-            self.canvas.render_heatmap(self._get_canvas_points_data())
+            self.canvas.render_heatmap(pts_data)
 
     def _on_scale_points_selected(self, x1, y1, x2, y2):
         real_dist, ok = QInputDialog.getDouble(self, "Real Distance", "Distance (meters):", 10.0, 0.1, 1000.0, 2)

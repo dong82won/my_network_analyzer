@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 '''
-QGraphicsView 뷰포트 조작, 히트맵 렌더링, Legend 오버레이 및 레이어 이벤트를 총괄하는 SurveyCanvas 모듈입니다.
+5m 격자 눈금 렌더링, 5m Snap-to-Grid 및 10m 감쇄 히트맵 렌더링이 적용된 SurveyCanvas 모듈입니다.
 '''
 
 import math
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from spatial.heatmap_generator import HeatmapGenerator
 from ui.canvas.constants import KEY_ITEM_TYPE, KEY_DATA_OBJ, TYPE_SCALE, TYPE_AP, TYPE_SAMPLE
 from ui.canvas.items import MeasureMarkerItem, APMarkerItem
-from ui.widgets.heatmap_legend_widget import HeatmapLegendWidget  # [핵심] Legend 위젯 임포트
+from ui.widgets.heatmap_legend_widget import HeatmapLegendWidget
 
 
 class SurveyCanvas(QGraphicsView):
@@ -46,11 +46,11 @@ class SurveyCanvas(QGraphicsView):
         self.heatmap_item: QGraphicsPixmapItem | None = None
         self.show_heatmap = False
 
-        # [핵심] 우측 하단 고정 오버레이 Legend 위젯 생성
         self.legend_widget = HeatmapLegendWidget(self)
         self.legend_widget.setVisible(False)
 
         self.meters_per_pixel = 0.05
+        self.grid_spacing_m = 5.0  # [핵심] 수동 조사 맞춤 5m 격자 설정
         self.min_marker_dist_px = 15.0
         self.show_grid = False
         self.grid_group: QGraphicsItemGroup | None = None
@@ -93,7 +93,6 @@ class SurveyCanvas(QGraphicsView):
         self.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333333;")
 
     def resizeEvent(self, event):
-        '''[핵심] 뷰포트 크기 변경 시 Legend 오버레이를 우측 하단 정위치에 고정 재배치'''
         super().resizeEvent(event)
         margin = 16
         x = self.width() - self.legend_widget.width() - margin
@@ -111,7 +110,6 @@ class SurveyCanvas(QGraphicsView):
             self.crosshair_h.setLine(0, y_px, rect.width(), y_px)
 
     def toggle_heatmap(self, state: bool, points_data: list[tuple[float, float, float]] | None = None):
-        '''히트맵 및 Legend 오버레이 가시성 통합 제어'''
         self.show_heatmap = state
         if self.show_heatmap and points_data is not None:
             self.render_heatmap(points_data)
@@ -121,7 +119,6 @@ class SurveyCanvas(QGraphicsView):
             self.legend_widget.setVisible(False)
 
     def render_heatmap(self, points_data: list[tuple[float, float, float]]):
-        '''수집된 픽셀 측정점을 기반으로 전역 연속 등고선 히트맵 렌더링 (-80 zValue)'''
         if not self.pixmap_item:
             return
 
@@ -134,6 +131,7 @@ class SurveyCanvas(QGraphicsView):
             width_px=width_px,
             height_px=height_px,
             meters_per_pixel=self.meters_per_pixel,
+            decay_radius_m=10.0,  # 5m 조사 규격 맞춤 10m 감쇄 반경
             downscale_factor=4,
             alpha_opacity=160
         )
@@ -185,6 +183,7 @@ class SurveyCanvas(QGraphicsView):
             self.grid_group.setVisible(self.show_grid)
 
     def draw_virtual_grid(self):
+        '''[핵심] 5m 간격으로 격자 눈금선 렌더링'''
         if self.grid_group:
             self.scene_obj.removeItem(self.grid_group)
             self.grid_group = None
@@ -196,27 +195,27 @@ class SurveyCanvas(QGraphicsView):
         self.grid_group.setZValue(-50)
 
         grid_pen = QPen(QColor(128, 128, 128, 180), 1, Qt.PenStyle.DashLine)
-        px_per_meter = 1.0 / self.meters_per_pixel
+        px_per_grid = self.grid_spacing_m / self.meters_per_pixel
 
         rect = self.pixmap_item.boundingRect()
         width, height = rect.width(), rect.height()
 
-        start_x = self.grid_offset_x % px_per_meter
-        start_y = self.grid_offset_y % px_per_meter
+        start_x = self.grid_offset_x % px_per_grid
+        start_y = self.grid_offset_y % px_per_grid
 
         x = start_x
         while x <= width:
             line = QGraphicsLineItem(x, 0, x, height)
             line.setPen(grid_pen)
             self.grid_group.addToGroup(line)
-            x += px_per_meter
+            x += px_per_grid
 
         y = start_y
         while y <= height:
             line = QGraphicsLineItem(0, y, width, y)
             line.setPen(grid_pen)
             self.grid_group.addToGroup(line)
-            y += px_per_meter
+            y += px_per_grid
 
         self.scene_obj.addItem(self.grid_group)
         self.grid_group.setVisible(self.show_grid)
@@ -325,10 +324,11 @@ class SurveyCanvas(QGraphicsView):
         x_px, y_px = scene_pos.x(), scene_pos.y()
         rect = self.pixmap_item.boundingRect()
 
+        # [핵심] 5m 격자 단위 스냅 연산
         if self.show_grid and self.meters_per_pixel > 0:
-            px_per_meter = 1.0 / self.meters_per_pixel
-            snap_x = round((x_px - self.grid_offset_x) / px_per_meter) * px_per_meter + self.grid_offset_x
-            snap_y = round((y_px - self.grid_offset_y) / px_per_meter) * px_per_meter + self.grid_offset_y
+            px_per_grid = self.grid_spacing_m / self.meters_per_pixel
+            snap_x = round((x_px - self.grid_offset_x) / px_per_grid) * px_per_grid + self.grid_offset_x
+            snap_y = round((y_px - self.grid_offset_y) / px_per_grid) * px_per_grid + self.grid_offset_y
         else:
             snap_x, snap_y = x_px, y_px
 
@@ -395,9 +395,9 @@ class SurveyCanvas(QGraphicsView):
         x_px, y_px = scene_pos.x(), scene_pos.y()
 
         if self.show_grid and self.meters_per_pixel > 0:
-            px_per_meter = 1.0 / self.meters_per_pixel
-            x_px = round((x_px - self.grid_offset_x) / px_per_meter) * px_per_meter + self.grid_offset_x
-            y_px = round((y_px - self.grid_offset_y) / px_per_meter) * px_per_meter + self.grid_offset_y
+            px_per_grid = self.grid_spacing_m / self.meters_per_pixel
+            x_px = round((x_px - self.grid_offset_x) / px_per_grid) * px_per_grid + self.grid_offset_x
+            y_px = round((y_px - self.grid_offset_y) / px_per_grid) * px_per_grid + self.grid_offset_y
 
         if self.mode == "EDIT_PAN" and event.button() == Qt.MouseButton.LeftButton:
             item = self.itemAt(event.pos())

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
-대안 A(고정 윈도우 유지), 대안 B(Y축 가로 타이틀), Jitter 실선 전환 및
-데이터/뷰포트 완전 분리(30FPS Timer)가 적용된 최종 DashboardTab 모듈입니다.
+Wi-Fi 단락 시 그래프 파형 그려짐 차단(NaN 처리), 붉은 카드 경고 테두리 디밍,
+단락 지속시간 카운터 및 6개 센서 카드 POOR/Red 전환이 반영된 최종 DashboardTab 모듈입니다.
 '''
 
 import time
@@ -45,17 +45,26 @@ class CompactYAxisItem(pg.AxisItem):
 
 
 class MetricCard(QFrame):
-    '''동적 컬러 수치 및 GOOD/WARN/POOR 우측 라벨을 갖춘 센서 지표 카드'''
+    '''단락 시 붉은 경고 테두리 및 어두운 적색 디밍을 지원하는 메트릭 카드'''
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.setFixedHeight(82)
-        self.setStyleSheet("""
+
+        self._style_normal = """
             QFrame {
                 background-color: #252526;
                 border: 1px solid #3c3c3c;
                 border-radius: 6px;
             }
-        """)
+        """
+        self._style_alert = """
+            QFrame {
+                background-color: #2d1818;
+                border: 1px solid #ff4444;
+                border-radius: 6px;
+            }
+        """
+        self.setStyleSheet(self._style_normal)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -80,6 +89,10 @@ class MetricCard(QFrame):
         layout.addWidget(self.lbl_title)
         layout.addLayout(val_layout)
 
+    def set_alert_mode(self, alert_on: bool):
+        '''경고 상태에 따른 테두리 및 배경 디밍 전환'''
+        self.setStyleSheet(self._style_alert if alert_on else self._style_normal)
+
     def update_data(self, value_text: str, value_color: str, status_text: str, status_color: str):
         self.lbl_value.setText(value_text)
         self.lbl_value.setStyleSheet(f"color: {value_color}; font-size: 18px; font-weight: bold; border: none;")
@@ -100,11 +113,13 @@ class DashboardTab(QWidget):
         self.loss_buffer = deque(maxlen=self.max_points)
         self.jitter_buffer = deque(maxlen=self.max_points)
 
+        # 단락 지속 시간 카운팅용 타임스탬프
+        self._disconnect_start_time: float | None = None
+
         self._init_ui()
 
-        # [뷰포트 최적화] 데이터 조작 없는 순수 뷰포트 렌더링 전용 타이머 (약 30FPS)
         self.render_timer = QTimer(self)
-        self.render_timer.setInterval(33)  # 33ms -> 30 FPS
+        self.render_timer.setInterval(33)  # 30 FPS
         self.render_timer.timeout.connect(self._update_viewport)
         self.render_timer.start()
 
@@ -113,9 +128,7 @@ class DashboardTab(QWidget):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
 
-        # -----------------------------------------------------------------
         # 1. 상단 네트워크 정보 카드
-        # -----------------------------------------------------------------
         info_frame = QFrame()
         info_frame.setFixedHeight(62)
         info_frame.setStyleSheet("""
@@ -146,9 +159,7 @@ class DashboardTab(QWidget):
 
         main_layout.addWidget(info_frame)
 
-        # -----------------------------------------------------------------
         # 2. 종합 평가 점수 바
-        # -----------------------------------------------------------------
         score_frame = QFrame()
         score_frame.setFixedHeight(50)
         score_frame.setStyleSheet("""
@@ -185,7 +196,7 @@ class DashboardTab(QWidget):
                 border-radius: 4px;
             }
             QProgressBar::chunk {
-                background-color: #28a745;
+                background-color: #ff4444;
                 border-radius: 4px;
             }
         """)
@@ -195,9 +206,7 @@ class DashboardTab(QWidget):
 
         main_layout.addWidget(score_frame)
 
-        # -----------------------------------------------------------------
-        # 3. 메트릭 센서 카드 그리드 (2행 3열)
-        # -----------------------------------------------------------------
+        # 3. 메트릭 센서 카드 그리드
         grid_layout = QGridLayout()
         grid_layout.setSpacing(8)
 
@@ -217,9 +226,7 @@ class DashboardTab(QWidget):
 
         main_layout.addLayout(grid_layout)
 
-        # -----------------------------------------------------------------
-        # 4. 실시간 파형 그래프 토글 컨트롤 바
-        # -----------------------------------------------------------------
+        # 4. 파형 그래프 토글 컨트롤 바
         control_layout = QHBoxLayout()
         control_layout.setContentsMargins(4, 2, 4, 2)
 
@@ -255,9 +262,7 @@ class DashboardTab(QWidget):
 
         main_layout.addLayout(control_layout)
 
-        # -----------------------------------------------------------------
-        # 5. PySide6 QVBoxLayout + 3개 독립 PlotWidget
-        # -----------------------------------------------------------------
+        # 5. PlotWidgets
         pg.setConfigOption('background', '#181818')
         pg.setConfigOption('foreground', '#888888')
 
@@ -268,7 +273,6 @@ class DashboardTab(QWidget):
 
         title_style_html = 'color: #aaaaaa; font-size: 9pt; font-weight: bold;'
 
-        # Plot 1: RSSI
         self.pw_rssi = pg.PlotWidget(axisItems={
             'bottom': TimeAxisItem(orientation='bottom'),
             'left': CompactYAxisItem(orientation='left')
@@ -283,7 +287,6 @@ class DashboardTab(QWidget):
         self.p1.getAxis('left').setTicks([[(-80, '-80'), (-60, '-60'), (-40, '-40')]])
         self.curve_rssi = self.p1.plot(pen=pg.mkPen(color='#00E5FF', width=2))
 
-        # Plot 2: Time Metrics (Latency & Jitter)
         self.pw_time = pg.PlotWidget(axisItems={
             'bottom': TimeAxisItem(orientation='bottom'),
             'left': CompactYAxisItem(orientation='left')
@@ -300,7 +303,6 @@ class DashboardTab(QWidget):
             name="Jitter"
         )
 
-        # Plot 3: Packet Loss
         self.pw_loss = pg.PlotWidget(axisItems={
             'bottom': TimeAxisItem(orientation='bottom'),
             'left': CompactYAxisItem(orientation='left')
@@ -316,8 +318,7 @@ class DashboardTab(QWidget):
         self.curve_loss = self.p3.plot(pen=pg.mkPen(color='#FF4500', width=2))
 
         for p in (self.p1, self.p2, self.p3):
-            left_axis = p.getAxis('left')
-            left_axis.setWidth(42)
+            p.getAxis('left').setWidth(42)
 
         self.p2.setXLink(self.p1)
         self.p3.setXLink(self.p1)
@@ -329,22 +330,85 @@ class DashboardTab(QWidget):
         main_layout.addWidget(self.plots_container, stretch=2)
 
     def _on_toggle_plots(self):
-        '''PySide6 Native Widget 가시성 제어로 숨겨진 그래프의 수직 공간 100% 즉시 재배정'''
         self.pw_rssi.setVisible(self.chk_rssi.isChecked())
-
         show_time = self.chk_latency.isChecked() or self.chk_jitter.isChecked()
         self.pw_time.setVisible(show_time)
         self.curve_latency.setVisible(self.chk_latency.isChecked())
         self.curve_jitter.setVisible(self.chk_jitter.isChecked())
-
         self.pw_loss.setVisible(self.chk_loss.isChecked())
 
     def update_metrics(self, metrics: NetworkMetrics):
-        '''[Data Layer] 수집 스레드로부터 데이터가 도착할 때만 실행되어 버퍼와 곡선을 업데이트합니다.'''
+        '''실시간 데이터 수신 시 단락 처리 및 파형 그려짐 차단 실행'''
         if not metrics:
             return
 
-        # 1. 헤더 정보 갱신
+        # -----------------------------------------------------------------
+        # [핵심] Wi-Fi 단락(WIFI: OFF) 시 예외 처리 및 파형 차단
+        # -----------------------------------------------------------------
+        if not metrics.wifi_connected:
+            if self._disconnect_start_time is None:
+                self._disconnect_start_time = time.time()
+
+            elapsed_sec = int(time.time() - self._disconnect_start_time)
+            mins, secs = divmod(elapsed_sec, 60)
+            dur_str = f"{mins:02d}:{secs:02d}"
+
+            # 1. 헤더 정보 표시
+            self.lbl_interface.setText(f"Interface: {metrics.interface}")
+            self.lbl_ssid.setText("SSID: Disconnected")
+            self.lbl_ip.setText("IP: 0.0.0.0")
+            self.lbl_gateway.setText("Gateway: 0.0.0.0")
+            self.lbl_bssid.setText("AP: --:--:--:--:--:--")
+            self.lbl_target.setText("Target: OFFLINE")
+
+            # 2. 6개 카드 테두리 경고 디밍(Red Outline) 및 POOR/Red 전환
+            for card in (self.card_freq, self.card_speed, self.card_rssi,
+                         self.card_latency, self.card_jitter, self.card_loss):
+                card.set_alert_mode(True)
+
+            self.card_freq.update_data("--", "#FF4444", "OFFLINE", "#FF4444")
+            self.card_speed.update_data("--", "#FF4444", "OFFLINE", "#FF4444")
+            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#FF4444", "POOR", "#FF4444")
+            self.card_latency.update_data("N/A", "#FF4444", "POOR", "#FF4444")
+            self.card_jitter.update_data("N/A", "#FF4444", "POOR", "#FF4444")
+            self.card_loss.update_data("100.0 %", "#FF4444", "POOR", "#FF4444")
+
+            # 3. 종합 평가 점수 바
+            self.progress_score.setValue(0)
+            self.progress_score.setStyleSheet("""
+                QProgressBar { background-color: #1e1e1e; border: none; border-radius: 4px; }
+                QProgressBar::chunk { background-color: #ff4444; border-radius: 4px; }
+            """)
+            self.lbl_score_value.setText(f"OFFLINE (Disconnected: {dur_str})")
+            self.lbl_score_value.setStyleSheet("color: #FF4444; font-size: 12px; font-weight: bold; border: none;")
+
+            # 4. [핵심] 그래프 파형 그려짐 차단 (float('nan') 주입)
+            # NaN 주입 시 pyqtgraph는 파형 선을 그리지 않고 구간을 끊어서(Discontinuous) 처리합니다.
+            meas_time = getattr(metrics, 'timestamp', time.time())
+            self.time_buffer.append(meas_time)
+            self.rssi_buffer.append(float('nan'))     # RSSI 파형 끊김
+            self.latency_buffer.append(float('nan'))  # Latency 파형 끊김 (0ms 그려짐 방지)
+            self.jitter_buffer.append(float('nan'))   # Jitter 파형 끊김
+            self.loss_buffer.append(float('nan'))     # Packet Loss 파형 끊김
+
+            if len(self.time_buffer) > 1:
+                x_data = list(self.time_buffer)
+                self.curve_rssi.setData(x_data, list(self.rssi_buffer))
+                self.curve_latency.setData(x_data, list(self.latency_buffer))
+                self.curve_jitter.setData(x_data, list(self.jitter_buffer))
+                self.curve_loss.setData(x_data, list(self.loss_buffer))
+
+            return
+
+        # -----------------------------------------------------------------
+        # 정상 Wi-Fi 연결 복구 시 처리 파이프라인
+        # -----------------------------------------------------------------
+        self._disconnect_start_time = None
+        for card in (self.card_freq, self.card_speed, self.card_rssi,
+                     self.card_latency, self.card_jitter, self.card_loss):
+            card.set_alert_mode(False)
+
+        # 1. 헤더 정보
         self.lbl_interface.setText(f"Interface: {metrics.interface}")
         self.lbl_ssid.setText(f"SSID: {metrics.ssid}")
         self.lbl_ip.setText(f"IP: {metrics.ip_addr}")
@@ -352,39 +416,43 @@ class DashboardTab(QWidget):
         self.lbl_bssid.setText(f"AP: {metrics.bssid}")
         self.lbl_target.setText(f"Target: {metrics.target_host} [{metrics.target_mode}]")
 
-        # 2. 센서 카드 임계값 동적 평가
-        self.card_freq.update_data(metrics.freq_ghz, "#28a745", "GOOD", "#28a745")
+        # 2. 메트릭 평가 및 데이터 업데이트
+        self.card_freq.update_data(metrics.freq_ghz, "#00FF66", "GOOD", "#00FF66")
+        self.card_speed.update_data(metrics.link_speed_mbps, "#00FF66", "GOOD", "#00FF66")
 
-        if metrics.rssi > -65:
-            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#28a745", "GOOD", "#28a745")
-        elif metrics.rssi >= -80:
-            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#FFD700", "WARN", "#FFD700")
+        if metrics.rssi >= -65:
+            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#00FF66", "EXCELLENT", "#00FF66")
+        elif metrics.rssi >= -75:
+            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#00E5FF", "GOOD", "#00E5FF")
+        elif metrics.rssi >= -85:
+            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#FFCC00", "WARN", "#FFCC00")
         else:
-            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#FF4500", "POOR", "#FF4500")
+            self.card_rssi.update_data(f"{metrics.rssi} dBm", "#FF4444", "POOR", "#FF4444")
 
-        self.card_speed.update_data(metrics.link_speed_mbps, "#28a745", "GOOD", "#28a745")
-
-        if metrics.latency_ms < 10.0:
-            self.card_latency.update_data(f"{metrics.latency_ms} ms", "#28a745", "GOOD", "#28a745")
-        elif metrics.latency_ms <= 50.0:
-            self.card_latency.update_data(f"{metrics.latency_ms} ms", "#FFD700", "WARN", "#FFD700")
+        lat_limit = 30.0 if metrics.target_mode == "LAN" else 80.0
+        if metrics.latency_ms <= 15.0:
+            self.card_latency.update_data(f"{metrics.latency_ms:.1f} ms", "#00FF66", "GOOD", "#00FF66")
+        elif metrics.latency_ms <= lat_limit:
+            self.card_latency.update_data(f"{metrics.latency_ms:.1f} ms", "#FFCC00", "WARN", "#FFCC00")
         else:
-            self.card_latency.update_data(f"{metrics.latency_ms} ms", "#FF4500", "POOR", "#FF4500")
+            self.card_latency.update_data(f"{metrics.latency_ms:.1f} ms", "#FF4444", "POOR", "#FF4444")
+
+        if metrics.jitter_ms <= 3.0:
+            self.card_jitter.update_data(f"{metrics.jitter_ms:.1f} ms", "#00FF66", "GOOD", "#00FF66")
+        elif metrics.jitter_ms <= 10.0:
+            self.card_jitter.update_data(f"{metrics.jitter_ms:.1f} ms", "#FFCC00", "WARN", "#FFCC00")
+        else:
+            self.card_jitter.update_data(f"{metrics.jitter_ms:.1f} ms", "#FF4444", "POOR", "#FF4444")
 
         if metrics.packet_loss_pct == 0.0:
-            self.card_loss.update_data(f"{metrics.packet_loss_pct} %", "#28a745", "GOOD", "#28a745")
+            self.card_loss.update_data(f"{metrics.packet_loss_pct:.1f} %", "#00FF66", "GOOD", "#00FF66")
+        elif metrics.packet_loss_pct <= 5.0:
+            self.card_loss.update_data(f"{metrics.packet_loss_pct:.1f} %", "#FFCC00", "WARN", "#FFCC00")
         else:
-            self.card_loss.update_data(f"{metrics.packet_loss_pct} %", "#FF4500", "POOR", "#FF4500")
+            self.card_loss.update_data(f"{metrics.packet_loss_pct:.1f} %", "#FF4444", "POOR", "#FF4444")
 
-        if metrics.jitter_ms < 2.0:
-            self.card_jitter.update_data(f"{metrics.jitter_ms} ms", "#28a745", "GOOD", "#28a745")
-        elif metrics.jitter_ms <= 10.0:
-            self.card_jitter.update_data(f"{metrics.jitter_ms} ms", "#FFD700", "WARN", "#FFD700")
-        else:
-            self.card_jitter.update_data(f"{metrics.jitter_ms} ms", "#FF4500", "POOR", "#FF4500")
-
-        # 3. 상단 평가 점수 바 갱신
-        score_color = "#28a745" if metrics.score >= 80 else ("#FFD700" if metrics.score >= 50 else "#FF4500")
+        # 3. 종합 평가 점수 바
+        score_color = "#00FF66" if metrics.score >= 80 else ("#FFCC00" if metrics.score >= 50 else "#FF4444")
         self.lbl_score_value.setText(f"{metrics.status_text} ({metrics.score} / 100)")
         self.lbl_score_value.setStyleSheet(f"color: {score_color}; font-size: 12px; font-weight: bold; border: none;")
         self.progress_score.setValue(metrics.score)
@@ -393,9 +461,8 @@ class DashboardTab(QWidget):
             QProgressBar::chunk {{ background-color: {score_color}; border-radius: 4px; }}
         """)
 
-        # 4. 수집기 스레드에서 측정한 정밀 타임스탬프 채록 및 데이터 버퍼 업데이트
+        # 4. 정상 실시간 파형 데이터 버퍼 업데이트
         meas_time = getattr(metrics, 'timestamp', time.time())
-
         self.time_buffer.append(meas_time)
         self.rssi_buffer.append(metrics.rssi)
         self.latency_buffer.append(metrics.latency_ms)
@@ -410,7 +477,6 @@ class DashboardTab(QWidget):
             self.curve_loss.setData(x_data, list(self.loss_buffer))
 
     def _update_viewport(self):
-        '''[View Layer] 30FPS로 동작하며, [현재 시간 - 60초, 현재 시간]의 고정 윈도우(Fixed Sliding Window)를 무조건 유지합니다.'''
         current_time = time.time()
 
         visible_masters = []
@@ -423,5 +489,4 @@ class DashboardTab(QWidget):
 
         if visible_masters:
             master_plot = visible_masters[0]
-            # [핵심] 대안 A: 구동 시간과 무관하게 항상 60초 폭을 갖는 하드웨어 오실로스코프 형태의 안정적인 뷰포트 유지
             master_plot.setXRange(current_time - 60.0, current_time, padding=0)

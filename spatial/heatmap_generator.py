@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
-실측 데이터 기반 전역 공간 보간(Global IDW) 및 부드러운 연속 등고선 필드를
-생성하는 HeatmapGenerator 모듈입니다.
+5m 수동 조사 규격에 최적화된 전역 공간 보간(Global IDW),
+10m 전파 감쇄 엔벨로프 마스킹 및 유효 측정 면적(m²) 적분 수치 연산 모듈입니다.
 '''
 
 import numpy as np
@@ -17,18 +17,17 @@ class HeatmapGenerator:
         width_px: int,
         height_px: int,
         meters_per_pixel: float = 0.05,
+        decay_radius_m: float = 10.0,              # 5m 격자의 2배인 10m 감쇄 반경
         min_rssi: float = -90.0,
         max_rssi: float = -30.0,
         downscale_factor: int = 4,
         alpha_opacity: int = 160
     ) -> QPixmap:
-        '''
-        전역 데이터 기반 연속 등고선 히트맵 QPixmap 생성
-        '''
+        '''5m 수동 조사 환경 맞춤형 전역 연속 등고선 히트맵 QPixmap 생성'''
         if not points or width_px <= 0 or height_px <= 0:
             return QPixmap()
 
-        # 1. 저해상도 연산 격자(Meshgrid) 생성 (NumPy 백터화)
+        # 1. 서브 픽셀 해상도 연산 격자(Meshgrid) 생성
         grid_w = max(1, width_px // downscale_factor)
         grid_h = max(1, height_px // downscale_factor)
 
@@ -47,19 +46,19 @@ class HeatmapGenerator:
         dy = gy[:, :, np.newaxis] - px_y
         dist = np.sqrt(dx * dx + dy * dy)
 
-        # 3. 전역 역거리 가중 보간 (Global IDW - 6개 지점 가중치 제한 없는 누적 합성)
+        # 3. 전역 역거리 가중 보간 (Global IDW - 연속 전파 필드)
         safe_dist = np.maximum(dist, 1e-5)
         weights = 1.0 / (safe_dist ** 2.0)
         weights_sum = np.sum(weights, axis=2)
 
         z_final = np.sum(weights * vals, axis=2) / weights_sum
 
-        # 4. 소프트 경계 알파 엔벨로프 (측정점 집합 외곽 부드러운 투명도 처리)
+        # 4. 10m 감쇄 엔벨로프 (5m 인접 점은 연결, 고립 지점 #12는 10m 이내 소멸)
         min_dist_px = np.min(dist, axis=2)
-        effective_radius_px = (15.0 / meters_per_pixel) if meters_per_pixel > 0 else 300.0
+        radius_px = (decay_radius_m / meters_per_pixel) if meters_per_pixel > 0 else 200.0
 
-        envelope = np.clip(1.0 - (min_dist_px / effective_radius_px) ** 2.0, 0.0, 1.0)
-        alpha = (alpha_opacity * (0.25 + 0.75 * envelope)).astype(np.uint8)
+        envelope = np.clip(1.0 - (min_dist_px / radius_px) ** 2.0, 0.0, 1.0)
+        alpha = (alpha_opacity * envelope).astype(np.uint8)
 
         # 5. 수신 강도 수치 -> ColorMap (Jet / Rainbow) 변환
         norm = np.clip((z_final - min_rssi) / (max_rssi - min_rssi), 0.0, 1.0)
@@ -120,3 +119,46 @@ class HeatmapGenerator:
         )
 
         return pixmap
+
+    @classmethod
+    def calculate_survey_area_m2(
+        cls,
+        points: list[tuple[float, float, float]],
+        width_px: int,
+        height_px: int,
+        meters_per_pixel: float = 0.05,
+        coverage_radius_m: float = 7.5,
+        downscale_factor: int = 4
+    ) -> float:
+        '''[아이디어 ③] 유효 신호 커버리지 실면적(m²) 수치 적분 산출'''
+        if not points or width_px <= 0 or height_px <= 0 or meters_per_pixel <= 0:
+            return 0.0
+
+        grid_w = max(1, width_px // downscale_factor)
+        grid_h = max(1, height_px // downscale_factor)
+
+        gx, gy = np.meshgrid(
+            np.linspace(0, width_px, grid_w),
+            np.linspace(0, height_px, grid_h)
+        )
+
+        pts = np.array(points)
+        px_x = pts[:, 0]
+        px_y = pts[:, 1]
+
+        dx = gx[:, :, np.newaxis] - px_x
+        dy = gy[:, :, np.newaxis] - px_y
+        dist = np.sqrt(dx * dx + dy * dy)
+
+        min_dist_px = np.min(dist, axis=2)
+        radius_px = coverage_radius_m / meters_per_pixel
+
+        # 유효 범위 내 포함된 격자 셀 개수 적분
+        valid_cells = np.sum(min_dist_px <= radius_px)
+
+        # 격자 셀 1개당 실제 면적(m²) 계산
+        cell_w_m = (width_px / grid_w) * meters_per_pixel
+        cell_h_m = (height_px / grid_h) * meters_per_pixel
+        cell_area_m2 = cell_w_m * cell_h_m
+
+        return float(valid_cells * cell_area_m2)

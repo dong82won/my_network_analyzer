@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 '''
-수집기 스레드와 각 탭 페이지 간 시그널/슬롯 바인딩 및 오케스트레이션을 담당하는 MainWindow 모듈입니다.
+ETH 상단 상태 표시를 제거하고 Wi-Fi 전용 상태 오버레이만 유지하도록 보완된 MainWindow 모듈입니다.
 '''
 
 from PySide6.QtCore import Qt
@@ -47,45 +47,28 @@ class MainWindow(QMainWindow):
         self.collector.metrics_updated.connect(self._on_metrics_updated)
         self.collector.event_occurred.connect(self.tab_history.add_event)
 
-        # SettingsTab의 target_changed 시그널 연결
         self.tab_settings.target_changed.connect(self._on_target_changed)
-
         self.collector.start()
 
     def _init_corner_status_widget(self):
+        '''ETH 상태 라벨을 삭제하고 우측 상단에 Wi-Fi 전용 상태 라벨만 배치'''
         corner_widget = QWidget()
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 12, 0)
         corner_layout.setSpacing(8)
-
-        self.lbl_status_eth = QLabel("ETH: OFF")
-        self.lbl_status_eth.setStyleSheet(
-            "font-size: 11px; font-weight: bold; color: #FF4444; background: #2b2b2b; padding: 3px 8px; border-radius: 4px;"
-        )
 
         self.lbl_status_wifi = QLabel("WIFI: OFF")
         self.lbl_status_wifi.setStyleSheet(
             "font-size: 11px; font-weight: bold; color: #FF4444; background: #2b2b2b; padding: 3px 8px; border-radius: 4px;"
         )
 
-        corner_layout.addWidget(self.lbl_status_eth)
         corner_layout.addWidget(self.lbl_status_wifi)
         self.tabs.setCornerWidget(corner_widget, Qt.Corner.TopRightCorner)
 
     def _on_metrics_updated(self, m: NetworkMetrics):
         self.current_metrics = m
 
-        if m.wired_connected:
-            self.lbl_status_eth.setText("ETH: ON")
-            self.lbl_status_eth.setStyleSheet(
-                "font-size: 11px; font-weight: bold; color: #00FF66; background: #2b2b2b; padding: 3px 8px; border-radius: 4px;"
-            )
-        else:
-            self.lbl_status_eth.setText("ETH: OFF")
-            self.lbl_status_eth.setStyleSheet(
-                "font-size: 11px; font-weight: bold; color: #FF4444; background: #2b2b2b; padding: 3px 8px; border-radius: 4px;"
-            )
-
+        # Wi-Fi 상태 뱃지 업데이트
         if m.wifi_connected:
             self.lbl_status_wifi.setText("WIFI: ON")
             self.lbl_status_wifi.setStyleSheet(

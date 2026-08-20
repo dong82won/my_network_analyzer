@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 '''
-Wi-Fi 신호 아이콘 형태의 커스텀 측정 마커(MeasureMarkerItem) 모듈입니다.
+5m Snap-to-Grid 및 가이드선 동기화가 반영된 MeasureMarkerItem 모듈입니다.
 '''
 
 from typing import Any
@@ -15,7 +15,6 @@ from ui.canvas.constants import KEY_ITEM_TYPE, KEY_DATA_OBJ, TYPE_SAMPLE
 
 
 class MeasureMarkerItem(QGraphicsItem):
-    '''Wi-Fi 신호 아이콘 형태의 커스텀 그래픽 마커 아이템'''
     def __init__(self, x_px: float, y_px: float, rssi: int, seq_id: int, point_obj: object = None):
         super().__init__()
         self.setPos(x_px, y_px)
@@ -65,43 +64,39 @@ class MeasureMarkerItem(QGraphicsItem):
         pen = QPen(self.current_color, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
 
-        # 1. 중앙 원점
         painter.setBrush(QBrush(self.current_color))
         painter.drawEllipse(QRectF(-2.5, 3.5, 5, 5))
 
         start_angle = 45 * 16
         span_angle = 90 * 16
 
-        # 2. 내측 호
         rect1 = QRectF(-6.5, -2.5, 13, 13)
         painter.drawArc(rect1, start_angle, span_angle)
 
-        # 3. 중간 호
         rect2 = QRectF(-10.5, -6.5, 21, 21)
         painter.drawArc(rect2, start_angle, span_angle)
 
-        # 4. 외측 호
         rect3 = QRectF(-14.5, -10.5, 29, 29)
         painter.drawArc(rect3, start_angle, span_angle)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        '''드래그 이동 시 Snap-to-Grid 연산 및 붉은 점선 가이드선 위치 동기화 (Pylance 타입 검사 보정)'''
+        '''드래그 이동 시 5m Snap-to-Grid 및 가이드선 위치 동기화'''
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
             views = self.scene().views()
             if views:
-                canvas: Any = views[0]  # [핵심 1] QGraphicsView 추론을 Any로 캐스팅하여 Pylance 경고 차단
+                canvas: Any = views[0]
                 new_pos: QPointF = value
 
-                # [핵심 2] getattr()를 활용하여 QGraphicsView 커스텀 속성을 안전하게 추출
                 show_grid = getattr(canvas, "show_grid", False)
                 meters_per_pixel = getattr(canvas, "meters_per_pixel", 0.0)
+                grid_spacing_m = getattr(canvas, "grid_spacing_m", 5.0)
                 grid_offset_x = getattr(canvas, "grid_offset_x", 0.0)
                 grid_offset_y = getattr(canvas, "grid_offset_y", 0.0)
 
                 if show_grid and meters_per_pixel > 0:
-                    px_per_meter = 1.0 / meters_per_pixel
-                    snap_x = round((new_pos.x() - grid_offset_x) / px_per_meter) * px_per_meter + grid_offset_x
-                    snap_y = round((new_pos.y() - grid_offset_y) / px_per_meter) * px_per_meter + grid_offset_y
+                    px_per_grid = grid_spacing_m / meters_per_pixel
+                    snap_x = round((new_pos.x() - grid_offset_x) / px_per_grid) * px_per_grid + grid_offset_x
+                    snap_y = round((new_pos.y() - grid_offset_y) / px_per_grid) * px_per_grid + grid_offset_y
                 else:
                     snap_x, snap_y = new_pos.x(), new_pos.y()
 
